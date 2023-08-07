@@ -3,8 +3,8 @@ from collections.abc import Callable, Sequence
 
 import torch
 from einops.layers.torch import Reduce
-from timm.layers import DropBlock2d
 from torch import nn
+from torchvision.ops import DropBlock2d
 
 from .nn import BlockMHSA, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU
 
