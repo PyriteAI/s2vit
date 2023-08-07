@@ -3,12 +3,12 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flash-tinyvit"
+name = "s2vit"
 version = "0.1.0"
 authors = [
     { name = "Miller Wilt", email = "miller@pyriteai.com" },
 ]
-description = "Flash Attention enabled TinyViT implementation for PyTorch"
+description = "Spatial Shift Vision Transformer"
 readme = "README.md"
 requires-python = ">=3.10"
 dynamic = ["dependencies"]

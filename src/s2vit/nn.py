@@ -105,4 +105,20 @@ class BlockMHSA(nn.Module):
         return self.to_out(x)
 
 
-__all__ = ["BlockMHSA", "LayerNormNoBias", "LayerNormNoBias2d", "PatchEmbedding", "StarReLU"]
+class Shift2d(nn.Module):
+    def __init__(self, amount: int = 1):
+        super().__init__()
+
+        self.amount = amount
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        c = x.shape[1]
+        x_shifted = x.clone()
+        x_shifted[:, : c // 4, self.amount :, :] = x[:, : c // 4, : -self.amount, :]
+        x_shifted[:, c // 4 : c // 2, : -self.amount, :] = x[:, c // 4 : c // 2, self.amount :, :]
+        x_shifted[:, c // 2 : (3 * c) // 4, :, self.amount :] = x[:, c // 2 : (3 * c) // 4, :, : -self.amount]
+        x_shifted[:, (3 * c) // 4 :, :, : -self.amount] = x[:, (3 * c) // 4 :, :, self.amount :]
+        return x_shifted
+
+
+__all__ = ["BlockMHSA", "LayerNormNoBias", "LayerNormNoBias2d", "PatchEmbedding", "Shift2d", "StarReLU"]

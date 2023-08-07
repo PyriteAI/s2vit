@@ -1,1 +1,1 @@
-# Flash TinyViT
+# Spatial Shift ViT
