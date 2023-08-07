@@ -75,6 +75,7 @@ class CosineAnnealingLR(optim.lr_scheduler.LambdaLR):
 class LightningImagenetteClassifier(pl.LightningModule):
     def __init__(
         self,
+        # Model Parameters
         depths: Sequence[int] = (2, 2, 6, 2),
         dims: Sequence[int] = (64, 128, 160, 320),
         patch_sizes: Sequence[int | tuple[int, int]] = (4, 2, 2, 2),
@@ -86,12 +87,31 @@ class LightningImagenetteClassifier(pl.LightningModule):
         drop_block_rate: float = 0.0,
         drop_block_size: int = 7,
         bias: bool = False,
+        # Optimizer Parameters
+        lr: float = 1.0e-5,
+        weight_decay: float = 1.0e-3,
+        # EMA Parameters
+        ema_beta: float = 0.9998,
+        ema_update_after_step: int = 100,
+        ema_update_every: int = 1,
+        ema_inv_gamma: float = 1.0,
+        ema_power: float = 0.75,
+        # Mixup Parameters
+        mixup_alpha: float = 0.8,
+        cutmix_alpha: float = 1.0,
+        label_smoothing: float = 0.0,
+        # Data(Loader) Parameters
+        image_size: int = 256,
+        batch_size: int = 64,
+        num_workers: int = 8,
     ):
         super().__init__()
 
         self.save_hyperparameters()
 
-        self.mixup = Mixup(mixup_alpha=0.8, cutmix_alpha=1.0, label_smoothing=0.0, num_classes=10)
+        self.mixup = Mixup(
+            mixup_alpha=mixup_alpha, cutmix_alpha=cutmix_alpha, label_smoothing=label_smoothing, num_classes=10
+        )
         self.model = S2ViT(
             depths=depths,
             dims=dims,
@@ -109,13 +129,18 @@ class LightningImagenetteClassifier(pl.LightningModule):
         )
         self.ema_model = EMA(
             self.model,
-            beta=0.9998,
-            update_after_step=100,
-            update_every=1,
-            inv_gamma=1.0,
-            power=0.75,
+            beta=ema_beta,
+            update_after_step=ema_update_after_step,
+            update_every=ema_update_every,
+            inv_gamma=ema_inv_gamma,
+            power=ema_power,
             include_online_model=False,
         )
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.image_size = image_size
+        self.batch_size = batch_size
+        self.num_workers = num_workers
 
     def training_step(self, batch: Any, batch_idx: int):
         images, targets = batch["image"], batch["label"]
@@ -141,7 +166,7 @@ class LightningImagenetteClassifier(pl.LightningModule):
         self.log("val_acc", acc, on_step=False, on_epoch=True, prog_bar=True, logger=True)
 
     def configure_optimizers(self) -> Any:
-        optimizer = Lion(self.model.parameters(), lr=1.0e-5, weight_decay=1.0e-3)
+        optimizer = Lion(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         lr_scheduler = CosineAnnealingLR(
             optimizer, total_steps=int(self.trainer.estimated_stepping_batches), warmup_steps=2000
         )
@@ -150,7 +175,7 @@ class LightningImagenetteClassifier(pl.LightningModule):
     def train_dataloader(self):
         dataset = create_train_dataset("frgfm/imagenette", name="full_size", split_name="train")
         dataset = cast(Dataset, dataset)
-        transform = create_train_transform(image_size=256)
+        transform = create_train_transform(image_size=self.image_size)
         dataset.set_transform(apply_transform(transform))
 
         sampler = RepeatAugSampler(
@@ -158,9 +183,9 @@ class LightningImagenetteClassifier(pl.LightningModule):
         )
         dataloader = DataLoader(
             dataset,  # type: ignore
-            batch_size=64,
+            batch_size=self.batch_size,
             sampler=sampler,
-            num_workers=8,
+            num_workers=self.num_workers,
             pin_memory=True,
             drop_last=True,
         )
@@ -169,7 +194,7 @@ class LightningImagenetteClassifier(pl.LightningModule):
     def val_dataloader(self):
         dataset = create_val_dataset("frgfm/imagenette", name="full_size", split_name="validation")
         dataset = cast(Dataset, dataset)
-        transform = create_val_transform(image_size=256)
+        transform = create_val_transform(image_size=self.image_size)
         dataset.set_transform(apply_transform(transform))
 
         sampler = DistributedSampler(
@@ -177,9 +202,9 @@ class LightningImagenetteClassifier(pl.LightningModule):
         )
         dataloader = DataLoader(
             dataset,  # type: ignore
-            batch_size=64,
+            batch_size=self.batch_size,
             sampler=sampler,
-            num_workers=8,
+            num_workers=self.num_workers,
             pin_memory=True,
             drop_last=False,
         )
