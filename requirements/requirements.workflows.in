@@ -1,5 +1,5 @@
-aim
 datasets
 ema-pytorch
-lightning-fabric
 lion-pytorch
+pytorch-lightning
+tensorboard

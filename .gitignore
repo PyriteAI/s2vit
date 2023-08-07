@@ -336,4 +336,5 @@ $RECYCLE.BIN/
 .ruff_cache/
 /artifacts
 /data
+lightning_logs/
 outputs/
