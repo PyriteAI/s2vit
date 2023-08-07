@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import pytorch_lightning as pl
 import torch
+import typer
 from datasets import Dataset, load_dataset
 from ema_pytorch import EMA
 from lion_pytorch import Lion
@@ -249,8 +250,6 @@ def create_val_transform(image_size: int, ratio: float = 1.0):
             transforms.Resize(image_resize),
             transforms.CenterCrop(image_size),
             transforms.ToTensor(),
-            # NOTE: Grayscale seems to ignore `num_output_channels` if the input is a PIL Image, so we need to expand
-            # the tensor to 3 channels manually.
             transforms.Lambda(lambda x: x.expand(3, -1, -1)),
             transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD),
         ]
@@ -276,14 +275,69 @@ def create_val_dataset(path: str, split_name: str = "validation", **kwargs: Any)
     return dataset
 
 
-def main():
+def main(
+    # Model Parameters
+    depths: tuple[int, int, int, int] = (2, 2, 6, 2),
+    dims: tuple[int, int, int, int] = (64, 128, 256, 512),
+    patch_sizes: tuple[int, int, int, int] = (4, 2, 2, 2),
+    dim_head: int = 32,
+    block_size: int = 8,
+    drop_rate: float = 0.0,
+    attn_drop_rate: float = 0.0,
+    drop_block_rate: float = 0.0,
+    drop_block_size: int = 7,
+    bias: bool = False,
+    # Optimizer Parameters
+    lr: float = 1.0e-5,
+    weight_decay: float = 1.0e-3,
+    # EMA Parameters
+    ema_beta: float = 0.9998,
+    ema_update_after_step: int = 100,
+    ema_update_every: int = 1,
+    ema_inv_gamma: float = 1.0,
+    ema_power: float = 0.75,
+    # Mixup Parameters
+    mixup_alpha: float = 0.8,
+    cutmix_alpha: float = 1.0,
+    label_smoothing: float = 0.0,
+    # Data(Loader) Parameters
+    max_epochs: int = 200,
+    image_size: int = 256,
+    batch_size: int = 64,
+    num_workers: int = 8,
+    seed: int = 42,
+):
     torch.set_float32_matmul_precision("high")
-    pl.seed_everything(42, workers=True)
+    pl.seed_everything(seed, workers=True)
 
-    model = LightningImagenetteClassifier()
+    model = LightningImagenetteClassifier(
+        depths=depths,
+        dims=dims,
+        patch_sizes=patch_sizes,
+        dim_head=dim_head,
+        block_size=block_size,
+        drop_rate=drop_rate,
+        attn_drop_rate=attn_drop_rate,
+        drop_block_rate=drop_block_rate,
+        drop_block_size=drop_block_size,
+        bias=bias,
+        lr=lr,
+        weight_decay=weight_decay,
+        ema_beta=ema_beta,
+        ema_update_after_step=ema_update_after_step,
+        ema_update_every=ema_update_every,
+        ema_inv_gamma=ema_inv_gamma,
+        ema_power=ema_power,
+        mixup_alpha=mixup_alpha,
+        cutmix_alpha=cutmix_alpha,
+        label_smoothing=label_smoothing,
+        image_size=image_size,
+        batch_size=batch_size,
+        num_workers=num_workers,
+    )
     trainer = pl.Trainer(
         precision="bf16-mixed",
-        max_epochs=200,
+        max_epochs=max_epochs,
         callbacks=[
             pl.callbacks.LearningRateMonitor(),
             pl.callbacks.EarlyStopping(monitor="val_acc", patience=10, mode="max"),
@@ -296,4 +350,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    typer.run(main)

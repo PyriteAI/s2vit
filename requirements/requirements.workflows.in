@@ -3,3 +3,4 @@ ema-pytorch
 lion-pytorch
 pytorch-lightning
 tensorboard
+typer
