@@ -12,14 +12,14 @@ Additionally, in leverages the patch embedding and positional encoding methods f
 ## Installation
 
 ```sh
-pip install s2-vit
+pip install s2vit
 ```
 
 ## Usage
 
 ```python
 import torch
-from s2_vit import S2ViT
+from s2vit import S2ViT
 
 vit = S2ViT(
     depths=(2, 2, 6, 2),
