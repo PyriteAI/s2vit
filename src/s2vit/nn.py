@@ -71,6 +71,16 @@ class PatchEmbedding(nn.Module):
         return self.proj(x)
 
 
+class PEG(nn.Module):
+    def __init__(self, dim: int, kernel_size: int = 3):
+        super().__init__()
+
+        self.proj = nn.Conv2d(dim, dim, kernel_size=kernel_size, stride=1, padding=kernel_size // 2, groups=dim)
+
+    def forward(self, x):
+        return x + self.proj(x)
+
+
 class BlockMHSA(nn.Module):
     def __init__(
         self,
@@ -121,4 +131,4 @@ class Shift2d(nn.Module):
         return x_shifted
 
 
-__all__ = ["BlockMHSA", "LayerNormNoBias", "LayerNormNoBias2d", "PatchEmbedding", "Shift2d", "StarReLU"]
+__all__ = ["BlockMHSA", "LayerNormNoBias", "LayerNormNoBias2d", "PatchEmbedding", "PEG", "Shift2d", "StarReLU"]

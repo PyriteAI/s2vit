@@ -6,7 +6,7 @@ from einops.layers.torch import Reduce
 from torch import nn
 from torchvision.ops import DropBlock2d
 
-from .nn import BlockMHSA, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU
+from .nn import PEG, BlockMHSA, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU
 
 
 class S2ViTBlock(nn.Module):
@@ -56,6 +56,7 @@ class S2ViTStage(nn.Module):
         dim_in: int,
         dim_out: int,
         depth: int,
+        use_peg: bool = True,
         patch_size: int | tuple[int, int] | None = None,
         dim_head: int = 32,
         block_size: int = 8,
@@ -74,24 +75,25 @@ class S2ViTStage(nn.Module):
             patch_embedding = PatchEmbedding(dim_in, dim_out, patch_size=patch_size, norm_layer=input_norm, bias=bias)
         else:
             patch_embedding = nn.Identity()
+        blocks: list[S2ViTBlock | PEG] = []
+        for i in range(depth):
+            if i == 1 and use_peg:
+                blocks.append(PEG(dim_out))
+            block = S2ViTBlock(
+                dim_out,
+                dim_head=dim_head,
+                block_size=block_size,
+                dim_ff=dim_ff,
+                norm_layer=norm_layer,
+                attn_drop_rate=attn_drop_rate,
+                ff_drop_rate=drop_rate,
+                drop_block_rate=drop_block_rate,
+                drop_block_size=drop_block_size,
+                bias=bias,
+            )
+            blocks.append(block)
         self.patch_embedding = patch_embedding
-        self.blocks = nn.Sequential(
-            *[
-                S2ViTBlock(
-                    dim_out,
-                    dim_head=dim_head,
-                    block_size=block_size,
-                    dim_ff=dim_ff,
-                    norm_layer=norm_layer,
-                    attn_drop_rate=attn_drop_rate,
-                    ff_drop_rate=drop_rate,
-                    drop_block_rate=drop_block_rate,
-                    drop_block_size=drop_block_size,
-                    bias=bias,
-                )
-                for _ in range(depth)
-            ]
-        )
+        self.blocks = nn.Sequential(*blocks)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.patch_embedding(x)
@@ -108,9 +110,10 @@ class S2ViT(nn.Module):
         in_channels: int = 3,
         global_pool: bool = False,
         num_classes: int | None = None,
+        use_peg: bool = True,
         dim_head: int = 32,
         block_size: int = 8,
-        dim_ff: int | None = None,
+        ff_expansions: Sequence[int] = (4, 4, 4, 4),
         norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
         input_norm: Callable[[int], nn.Module] = LayerNormNoBias2d,
         output_norm: Callable[[int], nn.Module] = LayerNormNoBias,
@@ -123,17 +126,18 @@ class S2ViT(nn.Module):
         super().__init__()
 
         stages: list[S2ViTStage] = []
-        for dim_in, dim_out, depth, patch_size in zip(
-            (in_channels, *dims[:-1]), dims, depths, patch_sizes, strict=True
+        for dim_in, dim_out, depth, patch_size, ff_expansion in zip(
+            (in_channels, *dims[:-1]), dims, depths, patch_sizes, ff_expansions, strict=True
         ):
             stage = S2ViTStage(
                 dim_in,
                 dim_out,
                 depth,
+                use_peg=use_peg,
                 patch_size=patch_size,
                 dim_head=dim_head,
                 block_size=block_size,
-                dim_ff=dim_ff,
+                dim_ff=dim_out * ff_expansion,
                 norm_layer=norm_layer,
                 input_norm=input_norm,
                 drop_rate=drop_rate,
