@@ -3,13 +3,13 @@ import random
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
-import flash_tinyvit as ftv
 import pytorch_lightning as pl
 import torch
 from datasets import Dataset, load_dataset
 from ema_pytorch import EMA
 from lion_pytorch import Lion
 from PIL import ImageFilter
+from s2vit import S2ViT
 from timm.data import Mixup, RandomResizedCropAndInterpolation
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data.distributed_sampler import RepeatAugSampler
@@ -92,7 +92,7 @@ class LightningImagenetteClassifier(pl.LightningModule):
         self.save_hyperparameters()
 
         self.mixup = Mixup(mixup_alpha=0.8, cutmix_alpha=1.0, label_smoothing=0.0, num_classes=10)
-        self.model = ftv.FlashTinyBlockViT(
+        self.model = S2ViT(
             depths=depths,
             dims=dims,
             patch_sizes=patch_sizes,

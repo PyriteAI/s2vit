@@ -6,10 +6,10 @@ from einops.layers.torch import Reduce
 from timm.layers import DropBlock2d
 from torch import nn
 
-from .nn import BlockMHSA, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, StarReLU
+from .nn import BlockMHSA, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU
 
 
-class FlashTinyBlockViTBlock(nn.Module):
+class S2ViTBlock(nn.Module):
     def __init__(
         self,
         dim: int,
@@ -31,6 +31,7 @@ class FlashTinyBlockViTBlock(nn.Module):
 
         self.attn = nn.Sequential(
             norm_layer(dim),
+            Shift2d(),
             BlockMHSA(dim, heads=heads, dim_head=dim_head, block_size=block_size, drop_rate=attn_drop_rate, bias=bias),
             DropBlock2d(drop_block_rate, drop_block_size),
         )
@@ -49,7 +50,7 @@ class FlashTinyBlockViTBlock(nn.Module):
         return x
 
 
-class FlashTinyBlockViTStage(nn.Module):
+class S2ViTStage(nn.Module):
     def __init__(
         self,
         dim_in: int,
@@ -76,7 +77,7 @@ class FlashTinyBlockViTStage(nn.Module):
         self.patch_embedding = patch_embedding
         self.blocks = nn.Sequential(
             *[
-                FlashTinyBlockViTBlock(
+                S2ViTBlock(
                     dim_out,
                     dim_head=dim_head,
                     block_size=block_size,
@@ -98,7 +99,7 @@ class FlashTinyBlockViTStage(nn.Module):
         return x
 
 
-class FlashTinyBlockViT(nn.Module):
+class S2ViT(nn.Module):
     def __init__(
         self,
         depths: Sequence[int] = (2, 2, 6, 2),
@@ -121,11 +122,11 @@ class FlashTinyBlockViT(nn.Module):
     ):
         super().__init__()
 
-        stages: list[FlashTinyBlockViTStage] = []
+        stages: list[S2ViTStage] = []
         for dim_in, dim_out, depth, patch_size in zip(
             (in_channels, *dims[:-1]), dims, depths, patch_sizes, strict=True
         ):
-            stage = FlashTinyBlockViTStage(
+            stage = S2ViTStage(
                 dim_in,
                 dim_out,
                 depth,
@@ -160,4 +161,4 @@ class FlashTinyBlockViT(nn.Module):
         return x
 
 
-__all__ = ["FlashTinyBlockViT", "FlashTinyBlockViTBlock", "FlashTinyBlockViTStage"]
+__all__ = ["S2ViT", "S2ViTBlock", "S2ViTStage"]
