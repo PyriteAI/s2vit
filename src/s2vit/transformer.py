@@ -112,7 +112,7 @@ class S2ViT(nn.Module):
         num_classes: int | None = None,
         use_peg: bool = True,
         dim_head: int = 32,
-        block_size: int = 8,
+        block_sizes: Sequence[int] = (8, 8, 8, 8),
         ff_expansions: Sequence[int] = (4, 4, 4, 4),
         norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
         input_norm: Callable[[int], nn.Module] = LayerNormNoBias2d,
@@ -126,8 +126,8 @@ class S2ViT(nn.Module):
         super().__init__()
 
         stages: list[S2ViTStage] = []
-        for dim_in, dim_out, depth, patch_size, ff_expansion in zip(
-            (in_channels, *dims[:-1]), dims, depths, patch_sizes, ff_expansions, strict=True
+        for dim_in, dim_out, depth, patch_size, block_size, ff_expansion in zip(
+            (in_channels, *dims[:-1]), dims, depths, patch_sizes, block_sizes, ff_expansions, strict=True
         ):
             stage = S2ViTStage(
                 dim_in,
