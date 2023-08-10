@@ -81,13 +81,13 @@ class PEG(nn.Module):
         return x + self.proj(x)
 
 
-class BlockMHSA(nn.Module):
+class WindowMHSA(nn.Module):
     def __init__(
         self,
         dim: int,
         heads: int = 8,
         dim_head: int = 64,
-        block_size: int = 8,
+        window_size: int = 8,
         drop_rate: float = 0.0,
         bias: bool = False,
     ):
@@ -96,14 +96,14 @@ class BlockMHSA(nn.Module):
         self.dim = dim
         self.heads = heads
         self.dim_head = dim_head
-        self.block_size = block_size
+        self.window_size = window_size
         self.drop_rate = drop_rate
 
         self.to_qkv = nn.Linear(dim, dim * 3, bias=bias)
         self.to_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.block_size, p2=self.block_size)
+        x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.window_size, p2=self.window_size)
         x, ps = pack([x], "* n d")
 
         qkv = self.to_qkv(x).chunk(3, dim=-1)
@@ -111,7 +111,7 @@ class BlockMHSA(nn.Module):
         x = F.scaled_dot_product_attention(q, k, v, dropout_p=self.drop_rate if self.training else 0.0)
         x = rearrange(x, "b h n d -> b n (h d)")
         (x,) = unpack(x, ps, "* n d")
-        x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.block_size, p2=self.block_size)
+        x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.window_size, p2=self.window_size)
         return self.to_out(x)
 
 
@@ -131,4 +131,4 @@ class Shift2d(nn.Module):
         return x_shifted
 
 
-__all__ = ["BlockMHSA", "LayerNormNoBias", "LayerNormNoBias2d", "PatchEmbedding", "PEG", "Shift2d", "StarReLU"]
+__all__ = ["WindowMHSA", "LayerNormNoBias", "LayerNormNoBias2d", "PatchEmbedding", "PEG", "Shift2d", "StarReLU"]
