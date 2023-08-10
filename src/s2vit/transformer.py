@@ -81,7 +81,7 @@ class S2ViTStage(nn.Module):
             patch_embedding = nn.Identity()
         blocks: list[S2ViTBlock | PEG] = []
         for i in range(depth):
-            if i == 1 and use_peg:
+            if i == 1 and use_peg and patch_size is not None:
                 blocks.append(PEG(dim_out))
             block = S2ViTBlock(
                 dim_out,
