@@ -1,12 +1,14 @@
+import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
+from typing import Any
 
 import torch
 from einops.layers.torch import Reduce
 from torch import nn
 from torchvision.ops import DropBlock2d
 
-from .nn import PEG, BlockMHSA, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU
+from .nn import PEG, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU, WindowMHSA
 
 
 class S2ViTBlock(nn.Module):
@@ -14,7 +16,7 @@ class S2ViTBlock(nn.Module):
         self,
         dim: int,
         dim_head: int = 32,
-        block_size: int = 8,
+        window_size: int = 8,
         dim_ff: int | None = None,
         norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
         attn_drop_rate: float = 0.0,
@@ -32,7 +34,9 @@ class S2ViTBlock(nn.Module):
         self.attn = nn.Sequential(
             norm_layer(dim),
             Shift2d(),
-            BlockMHSA(dim, heads=heads, dim_head=dim_head, block_size=block_size, drop_rate=attn_drop_rate, bias=bias),
+            WindowMHSA(
+                dim, heads=heads, dim_head=dim_head, window_size=window_size, drop_rate=attn_drop_rate, bias=bias
+            ),
             DropBlock2d(drop_block_rate, drop_block_size),
         )
         self.ff = nn.Sequential(
@@ -59,7 +63,7 @@ class S2ViTStage(nn.Module):
         use_peg: bool = True,
         patch_size: int | tuple[int, int] | None = None,
         dim_head: int = 32,
-        block_size: int = 8,
+        window_size: int = 8,
         dim_ff: int | None = None,
         norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
         input_norm: Callable[[int], nn.Module] = LayerNormNoBias2d,
@@ -82,7 +86,7 @@ class S2ViTStage(nn.Module):
             block = S2ViTBlock(
                 dim_out,
                 dim_head=dim_head,
-                block_size=block_size,
+                window_size=window_size,
                 dim_ff=dim_ff,
                 norm_layer=norm_layer,
                 attn_drop_rate=attn_drop_rate,
@@ -112,7 +116,7 @@ class S2ViT(nn.Module):
         num_classes: int | None = None,
         use_peg: bool = True,
         dim_head: int = 32,
-        block_sizes: Sequence[int] = (8, 8, 8, 8),
+        window_sizes: Sequence[int] = (8, 8, 8, 8),
         ff_expansions: Sequence[int] = (4, 4, 4, 4),
         norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
         input_norm: Callable[[int], nn.Module] = LayerNormNoBias2d,
@@ -122,12 +126,24 @@ class S2ViT(nn.Module):
         drop_block_rate: float = 0.0,
         drop_block_size: int = 7,
         bias: bool = False,
+        **kwargs: Any,
     ):
         super().__init__()
 
+        if "block_size" in kwargs:
+            warnings.warn(
+                "block_size is deprecated, use window_sizes instead", category=DeprecationWarning, stacklevel=1
+            )
+            window_sizes = [kwargs.pop("block_size")] * len(depths)
+        if "block_sizes" in kwargs:
+            warnings.warn(
+                "block_sizes is deprecated, use window_sizes instead", category=DeprecationWarning, stacklevel=1
+            )
+            window_sizes = kwargs.pop("block_sizes")
+
         stages: list[S2ViTStage] = []
-        for dim_in, dim_out, depth, patch_size, block_size, ff_expansion in zip(
-            (in_channels, *dims[:-1]), dims, depths, patch_sizes, block_sizes, ff_expansions, strict=True
+        for dim_in, dim_out, depth, patch_size, window_size, ff_expansion in zip(
+            (in_channels, *dims[:-1]), dims, depths, patch_sizes, window_sizes, ff_expansions, strict=True
         ):
             stage = S2ViTStage(
                 dim_in,
@@ -136,7 +152,7 @@ class S2ViT(nn.Module):
                 use_peg=use_peg,
                 patch_size=patch_size,
                 dim_head=dim_head,
-                block_size=block_size,
+                window_size=window_size,
                 dim_ff=dim_out * ff_expansion,
                 norm_layer=norm_layer,
                 input_norm=input_norm,
