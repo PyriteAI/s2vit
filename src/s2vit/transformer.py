@@ -4,11 +4,71 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 import torch
+from einops import pack, rearrange, unpack
 from einops.layers.torch import Reduce
 from torch import nn
+from torch.nn import functional as F
 from torchvision.ops import DropBlock2d
 
-from .nn import PEG, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU, WindowMHSA
+from .nn import PEG, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU
+
+
+class ParallelGatedWindowedAttention(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        dim_head: int = 32,
+        window_size: int = 8,
+        dim_ff: int | None = None,
+        attn_drop_rate: float = 0.0,
+        ff_drop_rate: float = 0.0,
+        bias: bool = False,
+    ):
+        super().__init__()
+
+        if dim_ff is None:
+            dim_ff = dim * 4
+        heads = dim // dim_head
+
+        self.dim = dim
+        self.heads = heads
+        self.dim_head = dim_head
+        self.window_size = window_size
+        self.attn_drop_rate = attn_drop_rate
+        self.ff_drop_rate = ff_drop_rate
+        self.bias = bias
+
+        self.fused_dims = (dim, dim, dim_ff)
+        self.fused_attn_ff_proj = nn.Linear(dim, sum(self.fused_dims), bias=bias)
+        self.attn_gate = nn.Linear(dim, heads)  # bias always set to True
+        self.attn_out = nn.Linear(dim, dim, bias=bias)
+        self.ff_out = nn.Sequential(
+            StarReLU(),
+            nn.Dropout(ff_drop_rate),
+            nn.Linear(dim_ff, dim, bias=bias),
+        )
+
+    def _init_weights(self) -> None:
+        nn.init.constant_(self.attn_gate.bias, 0.5)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.window_size, p2=self.window_size)
+        x, ps = pack([x], "* n d")
+
+        q, kv, x_ff = self.fused_attn_ff_proj(x).split(self.fused_dims, dim=-1)
+
+        q, kv = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), (q, kv))
+        x_attn = F.scaled_dot_product_attention(q, kv, kv, dropout_p=self.attn_drop_rate if self.training else 0.0)
+        x_gate = self.attn_gate(x)  # shape = (b, n, h)
+        x_gate = rearrange(x_gate, "b n h -> b h n ()")
+        x_attn = x_attn * torch.sigmoid(x_gate)
+        x_attn = rearrange(x_attn, "b h n d -> b n (h d)")
+
+        x = self.attn_out(x_attn) + self.ff_out(x_ff)
+
+        (x,) = unpack(x, ps, "* n d")
+        x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.window_size, p2=self.window_size)
+        return x
 
 
 class S2ViTBlock(nn.Module):
@@ -18,7 +78,6 @@ class S2ViTBlock(nn.Module):
         dim_head: int = 32,
         window_size: int = 8,
         dim_ff: int | None = None,
-        shared_kv: bool = False,
         norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
         attn_drop_rate: float = 0.0,
         ff_drop_rate: float = 0.0,
@@ -28,37 +87,23 @@ class S2ViTBlock(nn.Module):
     ):
         super().__init__()
 
-        if dim_ff is None:
-            dim_ff = dim * 4
-        heads = dim // dim_head
-
-        self.attn = nn.Sequential(
-            norm_layer(dim),
+        self.layers = nn.Sequential(
             Shift2d(),
-            WindowMHSA(
+            ParallelGatedWindowedAttention(
                 dim,
-                heads=heads,
                 dim_head=dim_head,
                 window_size=window_size,
-                shared_kv=shared_kv,
-                drop_rate=attn_drop_rate,
+                dim_ff=dim_ff,
+                attn_drop_rate=attn_drop_rate,
+                ff_drop_rate=ff_drop_rate,
                 bias=bias,
             ),
-            DropBlock2d(drop_block_rate, drop_block_size),
-        )
-        self.ff = nn.Sequential(
             norm_layer(dim),
-            nn.Conv2d(dim, dim_ff, kernel_size=1, bias=bias),
-            StarReLU(),
-            nn.Dropout(ff_drop_rate),
-            nn.Conv2d(dim_ff, dim, kernel_size=1, bias=bias),
-            DropBlock2d(drop_block_rate, drop_block_size),
+            DropBlock2d(p=drop_block_rate, block_size=drop_block_size),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x + self.attn(x)
-        x = x + self.ff(x)
-        return x
+        return x + self.layers(x)
 
 
 class S2ViTStage(nn.Module):
@@ -72,7 +117,6 @@ class S2ViTStage(nn.Module):
         dim_head: int = 32,
         window_size: int = 8,
         dim_ff: int | None = None,
-        shared_kv: bool = False,
         norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
         input_norm: Callable[[int], nn.Module] = LayerNormNoBias2d,
         drop_rate: float = 0.0,
@@ -96,7 +140,6 @@ class S2ViTStage(nn.Module):
                 dim_head=dim_head,
                 window_size=window_size,
                 dim_ff=dim_ff,
-                shared_kv=shared_kv,
                 norm_layer=norm_layer,
                 attn_drop_rate=attn_drop_rate,
                 ff_drop_rate=drop_rate,
@@ -127,7 +170,6 @@ class S2ViT(nn.Module):
         dim_head: int = 32,
         window_sizes: Sequence[int] = (8, 8, 8, 8),
         ff_expansions: Sequence[int] = (4, 4, 4, 4),
-        shared_kv: bool = False,
         norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
         input_norm: Callable[[int], nn.Module] = LayerNormNoBias2d,
         output_norm: Callable[[int], nn.Module] = LayerNormNoBias,
@@ -164,7 +206,6 @@ class S2ViT(nn.Module):
                 dim_head=dim_head,
                 window_size=window_size,
                 dim_ff=dim_out * ff_expansion,
-                shared_kv=shared_kv,
                 norm_layer=norm_layer,
                 input_norm=input_norm,
                 drop_rate=drop_rate,
@@ -192,4 +233,4 @@ class S2ViT(nn.Module):
         return x
 
 
-__all__ = ["S2ViT", "S2ViTBlock", "S2ViTStage"]
+__all__ = ["ParallelGatedWindowedAttention", "S2ViT", "S2ViTBlock", "S2ViTStage"]
