@@ -2,10 +2,9 @@ import math
 from collections.abc import Callable, Sequence
 
 import torch
-from einops import pack, rearrange, unpack
+from einops import rearrange
 from timm.layers import LayerNorm2d
 from torch import nn
-from torch.nn import functional as F
 
 from .utils import to_pair
 
@@ -81,57 +80,6 @@ class PEG(nn.Module):
         return x + self.proj(x)
 
 
-class WindowMHSA(nn.Module):
-    def __init__(
-        self,
-        dim: int,
-        heads: int = 8,
-        dim_head: int = 64,
-        window_size: int = 8,
-        shared_kv: bool = False,
-        drop_rate: float = 0.0,
-        bias: bool = False,
-    ):
-        super().__init__()
-
-        self.dim = dim
-        self.heads = heads
-        self.dim_head = dim_head
-        self.window_size = window_size
-        self.shared_kv = shared_kv
-        self.drop_rate = drop_rate
-
-        # Credit to @lucidrains for this idea.
-        if shared_kv:
-            self.to_qkv = nn.Linear(dim, dim * 2, bias=bias)
-        else:
-            self.to_qkv = nn.Linear(dim, dim * 3, bias=bias)
-        self.to_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
-        # Avoid if/else in forward pass
-        self._to_qkv = self._get_q_kv if shared_kv else self._get_qkv
-
-    def _get_qkv(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), qkv)
-        return q, k, v
-
-    def _get_q_kv(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        qkv = self.to_qkv(x).chunk(2, dim=-1)
-        q, kv = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), qkv)
-        return q, kv, kv
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.window_size, p2=self.window_size)
-        x, ps = pack([x], "* n d")
-
-        q, k, v = self._to_qkv(x)
-        x = F.scaled_dot_product_attention(q, k, v, dropout_p=self.drop_rate if self.training else 0.0)
-        x = rearrange(x, "b h n d -> b n (h d)")
-        (x,) = unpack(x, ps, "* n d")
-        x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.window_size, p2=self.window_size)
-        return self.to_out(x)
-
-
 class Shift2d(nn.Module):
     def __init__(self, amount: int = 1):
         super().__init__()
@@ -148,4 +96,4 @@ class Shift2d(nn.Module):
         return x_shifted
 
 
-__all__ = ["WindowMHSA", "LayerNormNoBias", "LayerNormNoBias2d", "PatchEmbedding", "PEG", "Shift2d", "StarReLU"]
+__all__ = ["LayerNormNoBias", "LayerNormNoBias2d", "PatchEmbedding", "PEG", "Shift2d", "StarReLU"]
