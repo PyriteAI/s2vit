@@ -21,7 +21,7 @@ from .ops import (
 )
 
 
-class SeqS2ViTBlock(nn.Module):
+class SequentialS2ViTBlock(nn.Module):
     def __init__(
         self,
         dim: int,
@@ -169,12 +169,12 @@ class S2ViTStage(nn.Module):
         elif attention_type == "parallel":
             block_type = ParallelS2ViTBlock
         elif attention_type == "sequential":
-            block_type = SeqS2ViTBlock
+            block_type = SequentialS2ViTBlock
         else:
             raise ValueError(
                 f"attention_type must be one of 'fused', 'parallel', or 'sequential', got {attention_type}"
             )
-        blocks: list[FusedS2ViTBlock | ParallelS2ViTBlock | SeqS2ViTBlock | PEG] = []
+        blocks: list[FusedS2ViTBlock | ParallelS2ViTBlock | SequentialS2ViTBlock | PEG] = []
         for i in range(depth):
             if i == 1 and use_peg and patch_size is not None:
                 blocks.append(PEG(dim_out))
@@ -278,4 +278,4 @@ class S2ViT(nn.Module):
         return x
 
 
-__all__ = ["S2ViT", "FusedS2ViTBlock", "ParallelS2ViTBlock", "S2ViTStage"]
+__all__ = ["S2ViT", "FusedS2ViTBlock", "ParallelS2ViTBlock", "S2ViTStage", "SequentialS2ViTBlock"]
