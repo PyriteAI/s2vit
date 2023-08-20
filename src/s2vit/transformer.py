@@ -1,7 +1,7 @@
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import torch
 from einops import pack, rearrange, unpack
@@ -10,7 +10,16 @@ from torch import nn
 from torch.nn import functional as F
 from torchvision.ops import DropBlock2d
 
-from .nn import PEG, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU
+from .nn import (
+    PEG,
+    LayerNormNoBias,
+    LayerNormNoBias2d,
+    ParallelFF,
+    ParallelGWAttention,
+    PatchEmbedding,
+    Shift2d,
+    StarReLU,
+)
 
 
 class FusedGWAttentionFF(nn.Module):
@@ -71,7 +80,7 @@ class FusedGWAttentionFF(nn.Module):
         return x
 
 
-class S2ViTBlock(nn.Module):
+class FusedS2ViTBlock(nn.Module):
     def __init__(
         self,
         dim: int,
@@ -106,12 +115,54 @@ class S2ViTBlock(nn.Module):
         return x + self.layers(x)
 
 
+class ParallelS2ViTBlock(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        dim_head: int = 32,
+        window_size: int = 8,
+        dim_ff: int | None = None,
+        norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
+        attn_drop_rate: float = 0.0,
+        ff_drop_rate: float = 0.0,
+        drop_block_rate: float = 0.0,
+        drop_block_size: int = 7,
+        bias: bool = False,
+    ):
+        super().__init__()
+
+        self.attn = nn.Sequential(
+            Shift2d(),
+            ParallelGWAttention(
+                dim,
+                heads=dim // dim_head,
+                dim_head=dim_head,
+                window_size=window_size,
+                drop_rate=attn_drop_rate,
+                bias=bias,
+            ),
+            norm_layer(dim),
+            DropBlock2d(p=drop_block_rate, block_size=drop_block_size),
+        )
+        self.ff = nn.Sequential(
+            ParallelFF(dim, dim_inner=dim_ff, drop_rate=ff_drop_rate, bias=bias),
+            norm_layer(dim),
+            DropBlock2d(p=drop_block_rate, block_size=drop_block_size),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.attn(x)
+        x = x + self.ff(x)
+        return x
+
+
 class S2ViTStage(nn.Module):
     def __init__(
         self,
         dim_in: int,
         dim_out: int,
         depth: int,
+        attention_type: Literal["fused", "parallel"] = "fused",
         use_peg: bool = True,
         patch_size: int | tuple[int, int] | None = None,
         dim_head: int = 32,
@@ -131,11 +182,17 @@ class S2ViTStage(nn.Module):
             patch_embedding = PatchEmbedding(dim_in, dim_out, patch_size=patch_size, norm_layer=input_norm, bias=bias)
         else:
             patch_embedding = nn.Identity()
-        blocks: list[S2ViTBlock | PEG] = []
+        if attention_type == "fused":
+            block_type = FusedS2ViTBlock
+        elif attention_type == "parallel":
+            block_type = ParallelS2ViTBlock
+        else:
+            raise ValueError(f"attention_type must be one of 'fused' or 'parallel', got {attention_type}")
+        blocks: list[FusedS2ViTBlock | ParallelS2ViTBlock | PEG] = []
         for i in range(depth):
             if i == 1 and use_peg and patch_size is not None:
                 blocks.append(PEG(dim_out))
-            block = S2ViTBlock(
+            block = block_type(
                 dim_out,
                 dim_head=dim_head,
                 window_size=window_size,
@@ -166,6 +223,7 @@ class S2ViT(nn.Module):
         in_channels: int = 3,
         global_pool: bool = False,
         num_classes: int | None = None,
+        attention_type: Literal["fused", "parallel"] = "fused",
         use_peg: bool = True,
         dim_head: int = 32,
         window_sizes: Sequence[int] = (8, 8, 8, 8),
@@ -201,6 +259,7 @@ class S2ViT(nn.Module):
                 dim_in,
                 dim_out,
                 depth,
+                attention_type=attention_type,
                 use_peg=use_peg,
                 patch_size=patch_size,
                 dim_head=dim_head,
@@ -233,4 +292,4 @@ class S2ViT(nn.Module):
         return x
 
 
-__all__ = ["FusedGWAttentionFF", "S2ViT", "S2ViTBlock", "S2ViTStage"]
+__all__ = ["FusedGWAttentionFF", "S2ViT", "FusedS2ViTBlock", "ParallelS2ViTBlock", "S2ViTStage"]
