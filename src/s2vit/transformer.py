@@ -13,7 +13,7 @@ from torchvision.ops import DropBlock2d
 from .nn import PEG, LayerNormNoBias, LayerNormNoBias2d, PatchEmbedding, Shift2d, StarReLU
 
 
-class ParallelGatedWindowedAttention(nn.Module):
+class FusedGWAttentionFF(nn.Module):
     def __init__(
         self,
         dim: int,
@@ -89,7 +89,7 @@ class S2ViTBlock(nn.Module):
 
         self.layers = nn.Sequential(
             Shift2d(),
-            ParallelGatedWindowedAttention(
+            FusedGWAttentionFF(
                 dim,
                 dim_head=dim_head,
                 window_size=window_size,
@@ -233,4 +233,4 @@ class S2ViT(nn.Module):
         return x
 
 
-__all__ = ["ParallelGatedWindowedAttention", "S2ViT", "S2ViTBlock", "S2ViTStage"]
+__all__ = ["FusedGWAttentionFF", "S2ViT", "S2ViTBlock", "S2ViTStage"]
