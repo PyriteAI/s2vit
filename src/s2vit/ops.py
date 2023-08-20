@@ -10,6 +10,56 @@ from .nn import LayerNormNoBias2d, StarReLU
 from .utils import to_pair
 
 
+class GWAttention(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        window_size: int = 8,
+        drop_rate: float = 0.0,
+        bias: bool = False,
+    ):
+        super().__init__()
+
+        dim_inner = dim_head * heads
+
+        self.dim = dim
+        self.heads = heads
+        self.dim_head = dim_head
+        self.window_size = window_size
+        self.drop_rate = drop_rate
+        self.dim_inner = dim_inner
+
+        # Credit to @lucidrains for this idea.
+        self.to_qkv = nn.Linear(dim, dim_inner * 2, bias=bias)
+        self.attn_gate = nn.Linear(dim_inner, heads)  # bias always set to True
+        self.to_out = nn.Linear(dim_inner, dim, bias=bias)
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        nn.init.constant_(self.attn_gate.bias, 0.5)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.window_size, p2=self.window_size)
+        x, ps = pack([x], "* n d")
+
+        qkv = self.to_qkv(x).chunk(2, dim=-1)
+        q, kv = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), qkv)
+        x_attn = F.scaled_dot_product_attention(q, kv, kv, dropout_p=self.drop_rate if self.training else 0.0)
+        x_gate = self.attn_gate(x)  # shape = (b, n, h)
+        x_gate = rearrange(x_gate, "b n h -> b h n ()")
+        x = x_attn * torch.sigmoid(x_gate)
+        x = rearrange(x, "b h n d -> b n (h d)")
+
+        x = self.to_out(x)
+
+        (x,) = unpack(x, ps, "* n d")
+        x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.window_size, p2=self.window_size)
+        return x
+
+
 class FusedGWAttentionFF(nn.Module):
     def __init__(
         self,
@@ -125,6 +175,24 @@ class ParallelGWAttention(nn.Module):
         return x
 
 
+class SequentialFF(nn.Module):
+    def __init__(self, dim: int, dim_inner: int | None = None, drop_rate: float = 0.0, bias: bool = False):
+        super().__init__()
+
+        if dim_inner is None:
+            dim_inner = dim * 4
+
+        self.layers = nn.Sequential(
+            nn.Conv2d(dim, dim_inner, kernel_size=1, bias=bias),
+            StarReLU(),
+            nn.Dropout(drop_rate),
+            nn.Conv2d(dim_inner, dim, kernel_size=1, bias=bias),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layers(x)
+
+
 class ParallelFF(nn.Module):
     def __init__(self, dim: int, dim_inner: int | None = None, drop_rate: float = 0.0, bias: bool = False):
         super().__init__()
@@ -132,7 +200,7 @@ class ParallelFF(nn.Module):
         if dim_inner is None:
             dim_inner = dim * 4
 
-        self.parallel_ff = nn.Sequential(
+        self.parallel_layers = nn.Sequential(
             nn.Conv2d(dim * 2, dim_inner * 2, kernel_size=1, groups=2, bias=bias),
             StarReLU(),
             nn.Dropout(drop_rate),
@@ -141,7 +209,7 @@ class ParallelFF(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.repeat(1, 2, 1, 1)
-        par_x = self.parallel_ff(x)
+        par_x = self.parallel_layers(x)
         par_x1, par_x2 = par_x.chunk(2, dim=1)
         x = par_x1 + par_x2
         return x
@@ -201,4 +269,13 @@ class Shift2d(nn.Module):
         return x_shifted
 
 
-__all__ = ["FusedGWAttentionFF", "PEG", "PatchEmbedding", "ParallelFF", "ParallelGWAttention", "Shift2d"]
+__all__ = [
+    "FusedGWAttentionFF",
+    "GWAttention",
+    "PEG",
+    "PatchEmbedding",
+    "ParallelFF",
+    "ParallelGWAttention",
+    "SequentialFF",
+    "Shift2d",
+]
