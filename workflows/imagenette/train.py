@@ -1,7 +1,7 @@
 import math
 import random
 from collections.abc import Callable, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytorch_lightning as pl
 import torch
@@ -80,6 +80,7 @@ class LightningImagenetteClassifier(pl.LightningModule):
         depths: Sequence[int] = (2, 2, 6, 2),
         dims: Sequence[int] = (64, 128, 160, 320),
         patch_sizes: Sequence[int | tuple[int, int]] = (4, 2, 2, 2),
+        attention_type: Literal["fused", "parallel"] = "fused",
         dim_head: int = 32,
         window_sizes: Sequence[int] = (8, 8, 8, 8),
         ff_expansions: Sequence[int] = (4, 4, 4, 4),
@@ -119,6 +120,7 @@ class LightningImagenetteClassifier(pl.LightningModule):
             patch_sizes=patch_sizes,
             global_pool=True,
             num_classes=10,
+            attention_type=attention_type,
             dim_head=dim_head,
             window_sizes=window_sizes,
             ff_expansions=ff_expansions,
@@ -280,6 +282,7 @@ def main(
     depths: tuple[int, int, int, int] = (2, 2, 6, 2),
     dims: tuple[int, int, int, int] = (64, 128, 256, 512),
     patch_sizes: tuple[int, int, int, int] = (4, 2, 2, 2),
+    attention_type: str = "fused",
     dim_head: int = 32,
     window_sizes: tuple[int, int, int, int] = (8, 8, 8, 8),
     drop_rate: float = 0.0,
@@ -310,10 +313,15 @@ def main(
     torch.set_float32_matmul_precision("high")
     pl.seed_everything(seed, workers=True)
 
+    if attention_type not in {"fused", "parallel"}:
+        raise ValueError(f"attention_type must be one of 'fused' or 'parallel', got {attention_type}")
+    attention_type = cast(Literal["fused", "parallel"], attention_type)
+
     model = LightningImagenetteClassifier(
         depths=depths,
         dims=dims,
         patch_sizes=patch_sizes,
+        attention_type=attention_type,
         dim_head=dim_head,
         window_sizes=window_sizes,
         drop_rate=drop_rate,
