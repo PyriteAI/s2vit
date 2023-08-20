@@ -80,7 +80,7 @@ class LightningImagenetteClassifier(pl.LightningModule):
         depths: Sequence[int] = (2, 2, 6, 2),
         dims: Sequence[int] = (64, 128, 160, 320),
         patch_sizes: Sequence[int | tuple[int, int]] = (4, 2, 2, 2),
-        attention_type: Literal["fused", "parallel"] = "fused",
+        attention_type: Literal["fused", "parallel", "sequential"] = "sequential",
         dim_head: int = 32,
         window_sizes: Sequence[int] = (8, 8, 8, 8),
         ff_expansions: Sequence[int] = (4, 4, 4, 4),
@@ -282,7 +282,7 @@ def main(
     depths: tuple[int, int, int, int] = (2, 2, 6, 2),
     dims: tuple[int, int, int, int] = (64, 128, 256, 512),
     patch_sizes: tuple[int, int, int, int] = (4, 2, 2, 2),
-    attention_type: str = "fused",
+    attention_type: str = "sequential",
     dim_head: int = 32,
     window_sizes: tuple[int, int, int, int] = (8, 8, 8, 8),
     drop_rate: float = 0.0,
@@ -313,8 +313,8 @@ def main(
     torch.set_float32_matmul_precision("high")
     pl.seed_everything(seed, workers=True)
 
-    if attention_type not in {"fused", "parallel"}:
-        raise ValueError(f"attention_type must be one of 'fused' or 'parallel', got {attention_type}")
+    if attention_type not in {"fused", "parallel", "sequential"}:
+        raise ValueError(f"attention_type must be one of 'fused', 'parallel', or 'sequential', got {attention_type}")
     attention_type = cast(Literal["fused", "parallel"], attention_type)
 
     model = LightningImagenetteClassifier(
