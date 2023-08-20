@@ -12,12 +12,12 @@ from .nn import LayerNormNoBias, LayerNormNoBias2d
 from .ops import (
     PEG,
     FusedGWAttentionFF,
+    GWAttention,
     ParallelFF,
     ParallelGWAttention,
     PatchEmbedding,
     SequentialFF,
     Shift2d,
-    WindowedAttention,
 )
 
 
@@ -39,7 +39,7 @@ class SequentialS2ViTBlock(nn.Module):
 
         self.attn = nn.Sequential(
             Shift2d(),
-            WindowedAttention(
+            GWAttention(
                 dim,
                 heads=dim // dim_head,
                 dim_head=dim_head,

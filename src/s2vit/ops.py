@@ -10,7 +10,7 @@ from .nn import LayerNormNoBias2d, StarReLU
 from .utils import to_pair
 
 
-class WindowedAttention(nn.Module):
+class GWAttention(nn.Module):
     def __init__(
         self,
         dim: int,
@@ -22,15 +22,24 @@ class WindowedAttention(nn.Module):
     ):
         super().__init__()
 
+        dim_inner = dim_head * heads
+
         self.dim = dim
         self.heads = heads
         self.dim_head = dim_head
         self.window_size = window_size
         self.drop_rate = drop_rate
+        self.dim_inner = dim_inner
 
         # Credit to @lucidrains for this idea.
-        self.to_qkv = nn.Linear(dim, dim * 2, bias=bias)
-        self.to_out = nn.Conv2d(dim, dim, kernel_size=1, bias=bias)
+        self.to_qkv = nn.Linear(dim, dim_inner * 2, bias=bias)
+        self.attn_gate = nn.Linear(dim_inner, heads)  # bias always set to True
+        self.to_out = nn.Linear(dim_inner, dim, bias=bias)
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        nn.init.constant_(self.attn_gate.bias, 0.5)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.window_size, p2=self.window_size)
@@ -38,11 +47,17 @@ class WindowedAttention(nn.Module):
 
         qkv = self.to_qkv(x).chunk(2, dim=-1)
         q, kv = map(lambda t: rearrange(t, "b n (h d) -> b h n d", h=self.heads), qkv)
-        x = F.scaled_dot_product_attention(q, kv, kv, dropout_p=self.drop_rate if self.training else 0.0)
+        x_attn = F.scaled_dot_product_attention(q, kv, kv, dropout_p=self.drop_rate if self.training else 0.0)
+        x_gate = self.attn_gate(x)  # shape = (b, n, h)
+        x_gate = rearrange(x_gate, "b n h -> b h n ()")
+        x = x_attn * torch.sigmoid(x_gate)
         x = rearrange(x, "b h n d -> b n (h d)")
+
+        x = self.to_out(x)
+
         (x,) = unpack(x, ps, "* n d")
         x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.window_size, p2=self.window_size)
-        return self.to_out(x)
+        return x
 
 
 class FusedGWAttentionFF(nn.Module):
@@ -256,11 +271,11 @@ class Shift2d(nn.Module):
 
 __all__ = [
     "FusedGWAttentionFF",
+    "GWAttention",
     "PEG",
     "PatchEmbedding",
     "ParallelFF",
     "ParallelGWAttention",
     "SequentialFF",
     "Shift2d",
-    "WindowedAttention",
 ]
