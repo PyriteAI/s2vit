@@ -15,8 +15,51 @@ from .ops import (
     ParallelFF,
     ParallelGWAttention,
     PatchEmbedding,
+    SequentialFF,
     Shift2d,
+    WindowedAttention,
 )
+
+
+class SeqS2ViTBlock(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        dim_head: int = 32,
+        window_size: int = 8,
+        dim_ff: int | None = None,
+        norm_layer: Callable[[int], nn.Module] = LayerNormNoBias2d,
+        attn_drop_rate: float = 0.0,
+        ff_drop_rate: float = 0.0,
+        drop_block_rate: float = 0.0,
+        drop_block_size: int = 7,
+        bias: bool = False,
+    ):
+        super().__init__()
+
+        self.attn = nn.Sequential(
+            Shift2d(),
+            WindowedAttention(
+                dim,
+                heads=dim // dim_head,
+                dim_head=dim_head,
+                window_size=window_size,
+                drop_rate=attn_drop_rate,
+                bias=bias,
+            ),
+            norm_layer(dim),
+            DropBlock2d(p=drop_block_rate, block_size=drop_block_size),
+        )
+        self.ff = nn.Sequential(
+            SequentialFF(dim, dim_inner=dim_ff, drop_rate=ff_drop_rate, bias=bias),
+            norm_layer(dim),
+            DropBlock2d(p=drop_block_rate, block_size=drop_block_size),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.attn(x)
+        x = x + self.ff(x)
+        return x
 
 
 class FusedS2ViTBlock(nn.Module):
@@ -101,7 +144,7 @@ class S2ViTStage(nn.Module):
         dim_in: int,
         dim_out: int,
         depth: int,
-        attention_type: Literal["fused", "parallel"] = "fused",
+        attention_type: Literal["fused", "parallel", "sequential"] = "sequential",
         use_peg: bool = True,
         patch_size: int | tuple[int, int] | None = None,
         dim_head: int = 32,
@@ -125,9 +168,13 @@ class S2ViTStage(nn.Module):
             block_type = FusedS2ViTBlock
         elif attention_type == "parallel":
             block_type = ParallelS2ViTBlock
+        elif attention_type == "sequential":
+            block_type = SeqS2ViTBlock
         else:
-            raise ValueError(f"attention_type must be one of 'fused' or 'parallel', got {attention_type}")
-        blocks: list[FusedS2ViTBlock | ParallelS2ViTBlock | PEG] = []
+            raise ValueError(
+                f"attention_type must be one of 'fused', 'parallel', or 'sequential', got {attention_type}"
+            )
+        blocks: list[FusedS2ViTBlock | ParallelS2ViTBlock | SeqS2ViTBlock | PEG] = []
         for i in range(depth):
             if i == 1 and use_peg and patch_size is not None:
                 blocks.append(PEG(dim_out))
@@ -162,7 +209,7 @@ class S2ViT(nn.Module):
         in_channels: int = 3,
         global_pool: bool = False,
         num_classes: int | None = None,
-        attention_type: Literal["fused", "parallel"] = "fused",
+        attention_type: Literal["fused", "parallel", "sequential"] = "sequential",
         use_peg: bool = True,
         dim_head: int = 32,
         window_sizes: Sequence[int] = (8, 8, 8, 8),
