@@ -95,6 +95,8 @@ class FusedGWAttentionFF(nn.Module):
             nn.Linear(dim_ff, dim, bias=bias),
         )
 
+        self._init_weights()
+
     def _init_weights(self) -> None:
         nn.init.constant_(self.attn_gate.bias, 0.5)
 
