@@ -42,6 +42,16 @@ class GWAttention(nn.Module):
         nn.init.constant_(self.attn_gate.bias, 0.5)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Pad to window size if necessary
+        ws = self.window_size
+        h, w = x.shape[-2:]
+        if h % ws != 0 or w % ws != 0:
+            hpad = ws - (h % ws)
+            wpad = ws - (w % ws)
+            x = F.pad(x, (0, wpad, 0, hpad), mode="constant", value=0)
+            padded = True
+        else:
+            padded = False
         x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.window_size, p2=self.window_size)
         x, ps = pack([x], "* n d")
 
@@ -57,6 +67,9 @@ class GWAttention(nn.Module):
 
         (x,) = unpack(x, ps, "* n d")
         x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.window_size, p2=self.window_size)
+        # Remove padding
+        if padded:
+            x = x[:, :, :h, :w].contiguous()
         return x
 
 
@@ -101,6 +114,16 @@ class FusedGWAttentionFF(nn.Module):
         nn.init.constant_(self.attn_gate.bias, 0.5)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Pad to window size if necessary
+        ws = self.window_size
+        h, w = x.shape[-2:]
+        if h % ws != 0 or w % ws != 0:
+            hpad = ws - (h % ws)
+            wpad = ws - (w % ws)
+            x = F.pad(x, (0, wpad, 0, hpad), mode="constant", value=0)
+            padded = True
+        else:
+            padded = False
         x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.window_size, p2=self.window_size)
         x, ps = pack([x], "* n d")
 
@@ -117,6 +140,9 @@ class FusedGWAttentionFF(nn.Module):
 
         (x,) = unpack(x, ps, "* n d")
         x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.window_size, p2=self.window_size)
+        # Remove padding
+        if padded:
+            x = x[:, :, :h, :w].contiguous()
         return x
 
 
@@ -151,6 +177,16 @@ class ParallelGWAttention(nn.Module):
         nn.init.constant_(self.parallel_attn_gate.bias, 0.5)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Pad to window size if necessary
+        ws = self.window_size
+        h, w = x.shape[-2:]
+        if h % ws != 0 or w % ws != 0:
+            hpad = ws - (h % ws)
+            wpad = ws - (w % ws)
+            x = F.pad(x, (0, wpad, 0, hpad), mode="constant", value=0)
+            padded = True
+        else:
+            padded = False
         x = rearrange(x, "b c (h p1) (w p2) -> b h w (p1 p2) c", p1=self.window_size, p2=self.window_size)
         x, ps = pack([x], "* n d")
         # Split across q and kv
@@ -174,6 +210,9 @@ class ParallelGWAttention(nn.Module):
         x = rearrange(x, "b d n -> b n d")
         (x,) = unpack(x, ps, "* n d")
         x = rearrange(x, "b h w (p1 p2) c -> b c (h p1) (w p2)", p1=self.window_size, p2=self.window_size)
+        # Remove padding
+        if padded:
+            x = x[:, :, :h, :w].contiguous()
         return x
 
 
