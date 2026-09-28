@@ -10,7 +10,6 @@ from datasets import Dataset, load_dataset
 from ema_pytorch import EMA
 from lion_pytorch import Lion
 from PIL import ImageFilter
-from s2vit import S2ViT
 from timm.data import Mixup, RandomResizedCropAndInterpolation
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from timm.data.distributed_sampler import RepeatAugSampler
@@ -18,6 +17,8 @@ from torch import optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, DistributedSampler
 from torchvision import transforms
+
+from s2vit import S2ViT
 
 
 class CosineAnnealingLR(optim.lr_scheduler.LambdaLR):
